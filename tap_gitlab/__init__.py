@@ -511,11 +511,11 @@ def sync_users(project):
 def sync_members(entity, element="project"):
     stream_name = "{}_members".format(element)
     member_stream = CATALOG.get_stream(stream_name)
+    if member_stream is None or not member_stream.is_selected():
+        return
     user_stream = CATALOG.get_stream('users')
     member_mdata = metadata.to_map(member_stream.metadata)
     user_mdata = metadata.to_map(user_stream.metadata)
-    if not member_stream.is_selected():
-        return
 
     url = get_url(entity=stream_name, id=entity['id'])
 
