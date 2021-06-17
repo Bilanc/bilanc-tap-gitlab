@@ -638,7 +638,7 @@ def sync_group(gid, pids):
 def sync_pipelines(project):
     entity = "pipelines"
     stream = CATALOG.get_stream(entity)
-    if not stream.is_selected():
+    if stream is None or not stream.is_selected():
         return
 
     mdata = metadata.to_map(stream.metadata)
