@@ -1,0 +1,25 @@
+{
+    "type": "object",
+    "properties": {
+    "project_id": {
+            "type": ["null", "integer"]
+    },
+    "merge_request_iid": {
+       "type": ["null", "integer"]
+     },
+      "user": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["null", "integer"] },
+          "name": { "type": ["null", "string"] },
+          "username": { "type": ["null", "string"] },
+          "state": { "type": ["null", "string"] },
+          "avatar_url": { "type": ["null", "string"] },
+          "web_url": { "type": ["null", "string"] }
+        }
+      },
+      "state": { "type": ["null", "string"] },
+      "created_at": { "type": ["null", "string"] }
+    }
+}
+  
