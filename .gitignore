@@ -98,3 +98,8 @@ config.json
 state.json
 catalog.json
 .autoenv.zsh
+
+.secrets
+.vscode
+pyenv.cfg
+.venv

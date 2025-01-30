@@ -1,0 +1,65 @@
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": ["null", "string"] },
+    "project_id": {
+      "type": ["null", "integer"]
+    },
+    "merge_request_iid": {
+      "type": ["null", "integer"]
+    },
+    "individual_note": { "type": ["null", "boolean"] },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["null", "integer"] },
+          "type": { "type": ["null", "string"] },
+          "body": { "type": ["null", "string"] },
+          "attachment": { "type": ["null", "string"] },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": { "type": ["null", "integer"] },
+              "name": { "type": ["null", "string"] },
+              "username": { "type": ["null", "string"] },
+              "state": { "type": ["null", "string"] },
+              "avatar_url": { "type": ["null", "string"] },
+              "web_url": { "type": ["null", "string"] },
+              "locked": { "type": ["null", "boolean"] }
+            }
+          },
+          "created_at": { "type": ["null", "string"] },
+          "updated_at": { "type": ["null", "string"] },
+          "system": { "type": ["null", "boolean"] },
+          "noteable_id": { "type": ["null", "integer"] },
+          "noteable_type": { "type": ["null", "string"] },
+          "project_id": { "type": ["null", "integer"] },
+          "commit_id": { "type": ["null", "string"] },
+          "position": {"type": ["null", "object"]},
+          "noteable_iid": { "type": ["null", "integer"] },
+          "commands_changes": {"type": ["null", "object"]},
+          "confidential": { "type": ["null", "boolean"] },
+          "internal": { "type": ["null", "boolean"] },
+          "imported": { "type": ["null", "boolean"] },
+          "imported_from": { "type": ["null", "string"] },
+          "resolved": { "type": ["null", "boolean"] },
+          "resolvable": { "type": ["null", "boolean"] },
+          "resolved_by": {
+            "type": ["null","object"],
+            "properties": {
+              "id": { "type": ["null", "integer"] },
+              "name": { "type": ["null", "string"] },
+              "username": { "type": ["null", "string"] },
+              "state": { "type": ["null", "string"] },
+              "avatar_url": { "type": ["null", "string"] },
+              "web_url": { "type": ["null", "string"] }
+            }
+          },
+          "resolved_at": { "type": ["null", "string"] }
+        }
+      }
+    }
+  }
+}

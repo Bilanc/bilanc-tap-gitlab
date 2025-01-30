@@ -86,6 +86,22 @@ RESOURCES = {
         'key_properties': ['project_id', 'merge_request_iid', 'commit_id'],
         'replication_method': 'FULL_TABLE',
     },
+    'merge_request_diffs': {
+        'url': '/projects/{id}/merge_requests/{secondary_id}/diffs',
+        'schema': load_schema('merge_request_diffs'),
+        'replication_method': 'FULL_TABLE',
+    },
+    'merge_request_reviewers': {
+        'url': '/projects/{id}/merge_requests/{secondary_id}/reviewers',
+        'schema': load_schema('merge_request_reviewers'),
+        'replication_method': 'FULL_TABLE',
+    },
+    "merge_request_discussions": {
+        'url': '/projects/{id}/merge_requests/{secondary_id}/discussions',
+        'schema': load_schema('merge_request_discussions'),
+        'key_properties': ['id'],
+        'replication_method': 'FULL_TABLE',
+    },
     'project_milestones': {
         'url': '/projects/{id}/milestones',
         'schema': load_schema('milestones'),
@@ -239,7 +255,7 @@ def request(url, params=None):
     return resp
 
 def gen_request(url):
-    if 'labels' in url:
+    if 'labels' in url or 'diffs' in url:
         # The labels API is timing out for large per_page values
         #  https://gitlab.com/gitlab-org/gitlab-ce/issues/63103
         # Keeping it at 20 until the bug is fixed
@@ -420,6 +436,9 @@ def sync_merge_requests(project):
             # And then sync all the commits for this MR
             # (if it has changed, new commits may be there to fetch)
             sync_merge_request_commits(project, transformed_row)
+            sync_merge_request_diffs(project, transformed_row)
+            sync_merge_request_reviewers(project, transformed_row)
+            sync_merge_request_discussions(project, transformed_row)
 
     singer.write_state(STATE)
 
@@ -441,6 +460,58 @@ def sync_merge_request_commits(project, merge_request):
             transformed_row = transformer.transform(row, RESOURCES["merge_request_commits"]["schema"], mdata)
 
             singer.write_record("merge_request_commits", transformed_row, time_extracted=utils.now())
+
+def sync_merge_request_diffs(project, merge_request):
+    entity = "merge_request_diffs"
+    stream = CATALOG.get_stream(entity)
+    if stream is None or not stream.is_selected():
+        return
+    mdata = metadata.to_map(stream.metadata)
+
+    url = get_url(entity=entity, id=project['id'], secondary_id=merge_request['iid'])
+
+    with Transformer(pre_hook=format_timestamp) as transformer:
+        for row in gen_request(url):
+            row['project_id'] = project['id']
+            row['merge_request_iid'] = merge_request['iid']
+            transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
+
+            singer.write_record(entity, transformed_row, time_extracted=utils.now())
+
+def sync_merge_request_reviewers(project, merge_request):
+    entity = "merge_request_reviewers"
+    stream = CATALOG.get_stream(entity)
+    if stream is None or not stream.is_selected():
+        return
+    mdata = metadata.to_map(stream.metadata)
+
+    url = get_url(entity=entity, id=project['id'], secondary_id=merge_request['iid'])
+
+    with Transformer(pre_hook=format_timestamp) as transformer:
+        for row in gen_request(url):
+            row['project_id'] = project['id']
+            row['merge_request_iid'] = merge_request['iid']
+            transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
+
+            singer.write_record(entity, transformed_row, time_extracted=utils.now())
+
+
+def sync_merge_request_discussions(project, merge_request):
+    entity = "merge_request_discussions"
+    stream = CATALOG.get_stream(entity)
+    if stream is None or not stream.is_selected():
+        return
+    mdata = metadata.to_map(stream.metadata)
+
+    url = get_url(entity=entity, id=project['id'], secondary_id=merge_request['iid'])
+
+    with Transformer(pre_hook=format_timestamp) as transformer:
+        for row in gen_request(url):
+            row['project_id'] = project['id']
+            row['merge_request_iid'] = merge_request['iid']
+            transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
+            singer.write_record(entity, transformed_row, time_extracted=utils.now())
+
 
 def sync_releases(project):
     entity = "releases"
@@ -758,7 +829,7 @@ def do_discover(select_all=False):
     for resource, config in RESOURCES.items():
         mdata = metadata.get_standard_metadata(
             schema=config["schema"],
-            key_properties=config["key_properties"],
+            key_properties=config.get("key_properties", []),
             valid_replication_keys=config.get("replication_keys"),
             replication_method=config["replication_method"],
         )
@@ -779,7 +850,7 @@ def do_discover(select_all=False):
                 tap_stream_id=resource,
                 stream=resource,
                 schema=Schema.from_dict(config["schema"]),
-                key_properties=config["key_properties"],
+                key_properties=config.get("key_properties", []),
                 metadata=mdata,
                 replication_key=config.get("replication_keys"),
                 is_view=None,

@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": ["null", "integer"]
+    },
+    "merge_request_iid": {
+      "type": ["null", "integer"]
+    },
+    "old_path": {
+      "type": ["null", "string"]
+    },
+    "new_path": {
+      "type": ["null", "string"]
+    },
+    "a_mode": {
+      "type": ["null", "string"]
+    },
+    "b_mode": {
+      "type": ["null", "string"]
+    },
+    "diff": {
+      "type": ["null", "string"]
+    },
+    "new_file": {
+      "type": ["null", "boolean"]
+    },
+    "renamed_file": {
+      "type": ["null", "boolean"]
+    },
+    "deleted_file": {
+      "type": ["null", "boolean"]
+    },
+    "generated_file": {
+      "type": ["null", "boolean"]
+    }
+  }
+}
