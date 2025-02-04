@@ -255,6 +255,7 @@ def request(url, params=None):
     return resp
 
 def gen_request(url):
+    LOGGER.info("Fetching data from: {}".format(url))
     if 'labels' in url or 'diffs' in url:
         # The labels API is timing out for large per_page values
         #  https://gitlab.com/gitlab-org/gitlab-ce/issues/63103
@@ -278,6 +279,7 @@ def gen_request(url):
             params['page'] = int(next_page)
             resp = request(url, params)
             resp_json = resp.json()
+            LOGGER.info("Received {} records".format(len(resp_json)))
             # handle endpoints that return a single JSON object
             if isinstance(resp_json, dict):
                 yield resp_json
@@ -398,7 +400,6 @@ def sync_merge_requests(project):
     # Keep a state for the merge requests fetched per project
     state_key = "project_{}_merge_requests".format(project["id"])
     start_date=get_start(state_key)
-
     url = get_url(entity=entity, id=project['id'], start_date=start_date)
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
@@ -666,6 +667,7 @@ def sync_epics(group):
     singer.write_state(STATE)
 
 def sync_group(gid, pids):
+    LOGGER.info("Syncing Group: {}".format(gid))
     stream = CATALOG.get_stream("groups")
     mdata = metadata.to_map(stream.metadata)
     url = get_url(entity="groups", id=gid)
@@ -679,16 +681,11 @@ def sync_group(gid, pids):
 
     time_extracted = utils.now()
 
-    if not pids:
-        #  Get all the projects of the group if none are provided
-        for project in data['projects']:
-            if project['id']:
-                sync_project(project['id'])
-    else:
-        # Sync only specific projects of the group, if explicit projects are provided
-        for pid in pids:
-            if pid.startswith(data['full_path'] + '/') or pid in [str(p['id']) for p in data['projects']]:
-                sync_project(pid)
+
+    LOGGER.info("Syncing all projects of the group: ")
+    for project in data['projects']:
+        if project['id']:
+            sync_project(project['id'])
 
     sync_milestones(data, "group")
 
@@ -705,6 +702,8 @@ def sync_group(gid, pids):
     with Transformer(pre_hook=format_timestamp) as transformer:
         group = transformer.transform(data, RESOURCES["groups"]["schema"], mdata)
         singer.write_record("groups", group, time_extracted=time_extracted)
+
+    return [str(project['id']) for project in data['projects']]
 
 def sync_pipelines(project):
     entity = "pipelines"
@@ -776,9 +775,10 @@ def sync_jobs(project, pipeline):
 
 def sync_project(pid):
     url = get_url(entity="projects", id=pid)
-
+    LOGGER.info("Fetching data from: {}".format(url))
     try:
         data = request(url).json()
+        LOGGER.info("Received data for project: {}".format(data['name']))
     except ResourceInaccessible as exc:
         # Don't halt execution if a Project is Inaccessible
         # Just skip it and continue with the rest of the extraction
@@ -866,19 +866,32 @@ def do_discover(select_all=False):
 def do_sync():
     LOGGER.info("Starting sync")
 
-    gids = list(filter(None, CONFIG['groups'].split(' ')))
-    pids = list(filter(None, CONFIG['projects'].split(' ')))
+    gids = list(filter(None, CONFIG['groups'].split(' '))) if CONFIG['groups'] else []
+    pids = list(filter(None, CONFIG['projects'].split(' '))) if CONFIG['projects'] else []
+
+    LOGGER.info("Found Group IDs: {}".format(gids))
+    LOGGER.info("Found Project IDs: {}".format(pids))
+
+    if not gids and not pids:
+        LOGGER.warn("No groups or projects found")
 
     for stream in CATALOG.get_selected_streams(STATE):
+        LOGGER.info("Writing Schema: {}".format(stream.tap_stream_id))
         singer.write_schema(stream.tap_stream_id, stream.schema.to_dict(), stream.key_properties)
 
+    synced_pids = []
     for gid in gids:
-        sync_group(gid, pids)
-
-    if not gids:
-        # When not syncing groups
-        for pid in pids:
+        projects_pids_within_group = sync_group(gid, pids)
+        synced_pids.extend(projects_pids_within_group)
+    
+    LOGGER.info("Synced Groups: {}".format(gids))
+    LOGGER.info("Synced Projects: {}".format(synced_pids))
+    
+    for pid in pids:
+        if pid not in synced_pids:
             sync_project(pid)
+        else:
+            LOGGER.info("Skipping project {} as it was already synced".format(pid))
 
     # Write the final STATE
     # This fixes syncing using groups, which don't emit a STATE message
