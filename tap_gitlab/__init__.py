@@ -798,31 +798,28 @@ def sync_project(pid):
             "There is no last_activity_at or created_at field on project {}. This usually means I don't have access to the project."
             .format(data['id']))
 
+    sync_members(data)
+    sync_users(data)
+    sync_issues(data)
+    sync_merge_requests(data)
+    sync_commits(data)
+    sync_branches(data)
+    sync_milestones(data)
+    sync_labels(data)
+    sync_releases(data)
+    sync_tags(data)
+    sync_pipelines(data)
 
-    if data['last_activity_at'] >= get_start(state_key):
+    if not stream.is_selected():
+        return
 
-        sync_members(data)
-        sync_users(data)
-        sync_issues(data)
-        sync_merge_requests(data)
-        sync_commits(data)
-        sync_branches(data)
-        sync_milestones(data)
-        sync_labels(data)
-        sync_releases(data)
-        sync_tags(data)
-        sync_pipelines(data)
+    with Transformer(pre_hook=format_timestamp) as transformer:
+        flatten_id(data, "owner")
+        project = transformer.transform(data, RESOURCES["projects"]["schema"], mdata)
+        singer.write_record("projects", project, time_extracted=time_extracted)
 
-        if not stream.is_selected():
-            return
-
-        with Transformer(pre_hook=format_timestamp) as transformer:
-            flatten_id(data, "owner")
-            project = transformer.transform(data, RESOURCES["projects"]["schema"], mdata)
-            singer.write_record("projects", project, time_extracted=time_extracted)
-
-        utils.update_state(STATE, state_key, last_activity_at)
-        singer.write_state(STATE)
+    utils.update_state(STATE, state_key, last_activity_at)
+    singer.write_state(STATE)
 
 def do_discover(select_all=False):
     streams = []
