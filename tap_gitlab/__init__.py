@@ -54,7 +54,7 @@ RESOURCES = {
         'replication_method': 'FULL_TABLE',
     },
     'commits': {
-        'url': '/projects/{id}/repository/commits?since={start_date}&with_stats=true',
+        'url': '/projects/{id}/repository/commits?since={start_date}&with_stats=true&all=true',
         'schema': load_schema('commits'),
         'key_properties': ['id'],
         'replication_method': 'INCREMENTAL',
