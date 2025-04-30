@@ -204,6 +204,11 @@ class ResourceInaccessible(Exception):
     e.g. Unauthorized, Forbidden, Not Found errors
     """
 
+class RetriableAPIError(Exception):
+    """
+    Exception for retriable errors.
+    """
+
 def truthy(val) -> bool:
     return str(val).lower() in TRUTHY
 
@@ -228,9 +233,8 @@ def get_start(entity):
 
 
 @backoff.on_exception(backoff.expo,
-                      (requests.exceptions.RequestException),
+                      (requests.exceptions.RequestException, RetriableAPIError),
                       max_tries=5,
-                      giveup=lambda e: e.response is not None and 400 <= e.response.status_code < 500, # pylint: disable=line-too-long
                       factor=2)
 def request(url, params=None):
     params = params or {}
@@ -246,6 +250,9 @@ def request(url, params=None):
         LOGGER.info("Skipping request to {}".format(url))
         LOGGER.info("Reason: {} - {}".format(resp.status_code, resp.content))
         raise ResourceInaccessible
+    elif resp.status_code in [429, 502]:
+        LOGGER.info("Retrying request to {}".format(url))
+        raise RetriableAPIError("Retriable error")
     elif resp.status_code >= 400:
         LOGGER.critical(
             "Error making request to GitLab API: GET {} [{} - {}]".format(
