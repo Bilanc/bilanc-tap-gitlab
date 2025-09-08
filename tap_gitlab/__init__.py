@@ -255,10 +255,9 @@ def request(url, params=None):
         LOGGER.info("Retrying request to {}".format(url))
         raise RetriableAPIError("Retriable error")
     elif resp.status_code >= 400:
-        LOGGER.critical(
+        raise Exception(
             "Error making request to GitLab API: GET {} [{} - {}]".format(
                 url, resp.status_code, resp.content))
-        sys.exit(1)
 
     return resp
 
