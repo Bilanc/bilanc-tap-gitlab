@@ -8,11 +8,13 @@ import singer
 from singer import Transformer, utils, metadata
 from singer.catalog import Catalog, CatalogEntry
 from singer.schema import Schema
+from tap_gitlab.auth import GitlabAuth
 
 import pytz
 import backoff
 from strict_rfc3339 import rfc3339_to_timestamp
 from dateutil.parser import isoparse
+
 
 PER_PAGE_MAX = 100
 CONFIG = {
@@ -22,10 +24,12 @@ CONFIG = {
     'groups': '',
     'ultimate_license': False,
     'fetch_merge_request_commits': False,
-    'fetch_pipelines_extended': False
+    'fetch_pipelines_extended': False,
+    'config_path': None
 }
 STATE = {}
 CATALOG = None
+AUTH = None
 
 def parse_datetime(datetime_str):
     dt = isoparse(datetime_str)
@@ -239,7 +243,8 @@ def get_start(entity):
 def request(url, params=None):
     params = params or {}
 
-    headers = { "Private-Token": CONFIG['private_token'] }
+    auth_token = AUTH.get_auth_token()
+    headers = { "Authorization": f"Bearer {auth_token}" }
     if 'user_agent' in CONFIG:
         headers['User-Agent'] = CONFIG['user_agent']
 
@@ -910,8 +915,10 @@ def do_sync():
 
 def main_impl():
     # TODO: Address properties that are required or not
-    args = utils.parse_args(["private_token", "projects", "start_date"])
-    args.config["private_token"] = args.config["private_token"].strip()
+    args = utils.parse_args(["projects", "start_date"])
+
+    global AUTH
+    AUTH = GitlabAuth(args.config_path)
 
     CONFIG.update(args.config)
     CONFIG['ultimate_license'] = truthy(CONFIG['ultimate_license'])
