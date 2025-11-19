@@ -24,6 +24,17 @@
         },
         "state": {
             "type": ["null", "string"]
+        },
+        "inserted_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         }
     }
 }

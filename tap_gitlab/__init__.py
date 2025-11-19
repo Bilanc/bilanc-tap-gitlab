@@ -268,17 +268,9 @@ def request(url, params=None):
 
 def gen_request(url):
     LOGGER.info("Fetching data from: {}".format(url))
-    if 'labels' in url or 'diffs' in url:
-        # The labels API is timing out for large per_page values
-        #  https://gitlab.com/gitlab-org/gitlab-ce/issues/63103
-        # Keeping it at 20 until the bug is fixed
-        per_page = 20
-    else:
-        per_page = PER_PAGE_MAX
-
     params = {
         'page': 1,
-        'per_page': per_page
+        'per_page': PER_PAGE_MAX
     }
 
     # X-Total-Pages header is not always available since GitLab 11.8
@@ -331,6 +323,7 @@ def sync_branches(project):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project['id']
+            row['inserted_at'] = utils.strftime(utils.now())
             flatten_id(row, "commit")
             transformed_row = transformer.transform(row, RESOURCES["branches"]["schema"], mdata)
             singer.write_record("branches", transformed_row, time_extracted=utils.now())
@@ -350,6 +343,7 @@ def sync_commits(project):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project["id"]
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
@@ -395,6 +389,7 @@ def sync_issues(project):
                 row["human_time_estimate"] = None
                 row["human_total_time_spent"] = None
 
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
@@ -440,6 +435,7 @@ def sync_merge_requests(project):
                 row["human_time_estimate"] = None
                 row["human_total_time_spent"] = None
 
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             # Write the MR record
@@ -470,6 +466,7 @@ def sync_merge_request_commits(project, merge_request):
             row['merge_request_iid'] = merge_request['iid']
             row['commit_id'] = row['id']
             row['commit_short_id'] = row['short_id']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES["merge_request_commits"]["schema"], mdata)
 
             singer.write_record("merge_request_commits", transformed_row, time_extracted=utils.now())
@@ -487,6 +484,7 @@ def sync_merge_request_diffs(project, merge_request):
         for row in gen_request(url):
             row['project_id'] = project['id']
             row['merge_request_iid'] = merge_request['iid']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
@@ -504,6 +502,7 @@ def sync_merge_request_reviewers(project, merge_request):
         for row in gen_request(url):
             row['project_id'] = project['id']
             row['merge_request_iid'] = merge_request['iid']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
@@ -522,6 +521,7 @@ def sync_merge_request_discussions(project, merge_request):
         for row in gen_request(url):
             row['project_id'] = project['id']
             row['merge_request_iid'] = merge_request['iid']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
 
@@ -539,6 +539,7 @@ def sync_releases(project):
             flatten_id(row, "author")
             flatten_id(row, "commit")
             row['project_id'] = project["id"]
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES["releases"]["schema"], mdata)
 
             singer.write_record("releases", transformed_row, time_extracted=utils.now())
@@ -556,6 +557,7 @@ def sync_tags(project):
         for row in gen_request(url):
             flatten_id(row, "commit")
             row['project_id'] = project["id"]
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES["tags"]["schema"], mdata)
 
             singer.write_record("tags", transformed_row, time_extracted=utils.now())
@@ -572,6 +574,7 @@ def sync_milestones(entity, element="project"):
 
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[element + "_milestones"]["schema"], mdata)
 
             singer.write_record(element + "_milestones", transformed_row, time_extracted=utils.now())
@@ -587,6 +590,7 @@ def sync_users(project):
     project["users"] = []
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES["users"]["schema"], mdata)
             project["users"].append(row["id"])
             singer.write_record("users", transformed_row, time_extracted=utils.now())
@@ -605,6 +609,7 @@ def sync_members(entity, element="project"):
 
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
+            row['inserted_at'] = utils.strftime(utils.now())
             # First, write a record for the user
             if user_stream.is_selected():
                 user_row = transformer.transform(row, RESOURCES["users"]["schema"], user_mdata)
@@ -629,6 +634,7 @@ def sync_labels(entity, element="project"):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row[element + '_id'] = entity['id']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[element + "_labels"]["schema"], mdata)
             singer.write_record(element + "_labels", transformed_row, time_extracted=utils.now())
 
@@ -647,6 +653,7 @@ def sync_epic_issues(group, epic):
             row['epic_iid'] = epic['iid']
             row['issue_id'] = row['id']
             row['issue_iid'] = row['iid']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES["epic_issues"]["schema"], mdata)
 
             singer.write_record("epic_issues", transformed_row, time_extracted=utils.now())
@@ -666,6 +673,7 @@ def sync_epics(group):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             flatten_id(row, "author")
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             # Write the Epic record
@@ -712,6 +720,7 @@ def sync_group(gid, pids):
         return
 
     with Transformer(pre_hook=format_timestamp) as transformer:
+        data['inserted_at'] = utils.strftime(time_extracted)
         group = transformer.transform(data, RESOURCES["groups"]["schema"], mdata)
         singer.write_record("groups", group, time_extracted=time_extracted)
 
@@ -732,7 +741,7 @@ def sync_pipelines(project):
 
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
-
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             # Write the Pipeline record
@@ -762,6 +771,7 @@ def sync_pipelines_extended(project, pipeline):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project['id']
+            row['inserted_at'] = utils.strftime(utils.now())
             transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
             singer.write_record(entity, transformed_row, time_extracted=utils.now())
@@ -777,6 +787,7 @@ def sync_jobs(project, pipeline):
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project['id']
+            row['inserted_at'] = utils.strftime(utils.now())
             flatten_id(row, 'user')
             flatten_id(row, 'commit')
             flatten_id(row, 'pipeline')
@@ -827,6 +838,7 @@ def sync_project(pid):
 
     with Transformer(pre_hook=format_timestamp) as transformer:
         flatten_id(data, "owner")
+        data['inserted_at'] = utils.strftime(time_extracted)
         project = transformer.transform(data, RESOURCES["projects"]["schema"], mdata)
         singer.write_record("projects", project, time_extracted=time_extracted)
 
