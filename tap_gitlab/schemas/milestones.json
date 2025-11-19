@@ -49,6 +49,17 @@
                     "type": "null"
                 }
             ]
+        },
+        "inserted_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         }
     }
 }

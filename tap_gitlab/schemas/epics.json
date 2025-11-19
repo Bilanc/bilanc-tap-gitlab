@@ -67,6 +67,17 @@
         },
         "downvotes": {
             "type": ["null", "integer"]
+        },
+        "inserted_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         }
     }
 }
