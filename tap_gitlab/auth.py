@@ -18,8 +18,13 @@ class GitlabAuth:
             self.__private_token = self.__private_token.strip()
 
 
-        if False:
-            raise Exception("private_token or ddd, client_secret, redirect_uri, and refresh_token are required")
+        if not self.__private_token and \
+            (not self.__client_id
+                or not self.__client_secret
+                or not self.__redirect_uri
+                or not self.__refresh_token) \
+            and (not self.__nango_connection_id or not self.__nango_secret_key):
+            raise Exception("private_token or client_id, client_secret, redirect_uri, and refresh_token are required")
 
         self.__session = requests.Session()
         self.__access_token = None
