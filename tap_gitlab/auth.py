@@ -93,7 +93,7 @@ class GitlabAuth:
                 expires_at_str = data.get("credentials", {}).get("expires_at")
                 self.__expires_at = datetime.strptime(expires_at_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) - timedelta(minutes=20)
             else:
-                self.__access_token = data.get("apiKey")
+                self.__access_token = data.get("credentials", {}).get("apiKey")
 
     def get_auth_token(self):
         if self.__private_token:
