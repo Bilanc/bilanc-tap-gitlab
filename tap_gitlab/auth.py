@@ -13,8 +13,10 @@ class GitlabAuth:
         self.__private_token = self.__config.get("private_token")
         self.__nango_connection_id = self.__config.get("nango_connection_id")
         self.__nango_secret_key = self.__config.get("nango_secret_key")
+        self.__self_hosted = self.__config.get("self_hosted", False)
         if isinstance(self.__private_token, str):
             self.__private_token = self.__private_token.strip()
+
 
         if not self.__private_token and \
             (not self.__client_id
@@ -68,8 +70,10 @@ class GitlabAuth:
         if self.__access_token is None or self.__expires_at <= datetime.now(timezone.utc):
             if not self.__nango_secret_key or not self.__nango_connection_id:
                 raise Exception("nango_secret_key and nango_connection_id are required for Nango authentication")
+            
+            provider_key: str = "gitlab-pat" if self.__self_hosted else "gitlab"
 
-            url = f"https://api.nango.dev/connection/{self.__nango_connection_id}?provider_config_key=gitlab&force_refresh=true"
+            url = f"https://api.nango.dev/connection/{self.__nango_connection_id}?provider_config_key={provider_key}&force_refresh=true"
 
             response = self.__session.get(
                 url,
@@ -84,9 +88,12 @@ class GitlabAuth:
 
             data = response.json()
 
-            self.__access_token = data.get("credentials", {}).get("access_token")
-            expires_at_str = data.get("credentials", {}).get("expires_at")
-            self.__expires_at = datetime.strptime(expires_at_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) - timedelta(minutes=20)
+            if not self.__self_hosted:
+                self.__access_token = data.get("credentials", {}).get("access_token")
+                expires_at_str = data.get("credentials", {}).get("expires_at")
+                self.__expires_at = datetime.strptime(expires_at_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) - timedelta(minutes=20)
+            else:
+                self.__access_token = data.get("credentials", {}).get("apiKey")
 
     def get_auth_token(self):
         if self.__private_token:
