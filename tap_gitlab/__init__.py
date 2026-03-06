@@ -255,6 +255,9 @@ def request(url, params=None):
         LOGGER.info("Skipping request to {}".format(url))
         LOGGER.info("Reason: {} - {}".format(resp.status_code, resp.content))
         raise ResourceInaccessible
+    elif resp.status_code == 404 and '/repository/' in url:
+        LOGGER.warning("Repository not found (empty repo?): {}".format(url))
+        raise ResourceInaccessible
     elif resp.status_code in [429, 500, 502]:
         LOGGER.info("Received error: {} - {}".format(resp.status_code, resp.content))
         LOGGER.info("Retrying request to {}".format(url))
