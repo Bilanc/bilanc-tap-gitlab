@@ -19,6 +19,9 @@
         "runner_id": {
             "type": ["null", "integer"]
         },
+        "runner_name": {
+            "type": ["null", "string"]
+        },
         "name": {
             "type": ["null", "string"]
         },
@@ -61,6 +64,23 @@
             ]
         },
         "coverage": {
+            "anyOf": [
+                {
+                    "type": "number",
+                    "format": "float"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "web_url": {
+            "type": ["null", "string"]
+        },
+        "failure_reason": {
+            "type": ["null", "string"]
+        },
+        "queued_duration": {
             "anyOf": [
                 {
                     "type": "number",

@@ -7,6 +7,15 @@
         "id": {
             "type": ["null", "integer"]
         },
+        "iid": {
+            "type": ["null", "integer"]
+        },
+        "name": {
+            "type": ["null", "string"]
+        },
+        "source": {
+            "type": ["null", "string"]
+        },
         "status": {
             "type": ["null", "string"]
         },
@@ -29,16 +38,16 @@
             "type": ["object", "null"],
             "properties": {
                 "name": {
-                  "type": ["null", "string"]
+                    "type": ["null", "string"]
                 },
                 "username": {
-                  "type": ["null", "string"]
+                    "type": ["null", "string"]
                 },
                 "id": {
-                  "type": ["null", "integer"]
+                    "type": ["null", "integer"]
                 },
                 "state": {
-                  "type": ["null", "string"]
+                    "type": ["null", "string"]
                 }
             }
         },
@@ -78,6 +87,9 @@
         },
         "duration": {
             "type": ["null", "integer"]
+        },
+        "queued_duration": {
+            "type": ["null", "number"]
         },
         "coverage": {
             "type": ["null", "number"]
