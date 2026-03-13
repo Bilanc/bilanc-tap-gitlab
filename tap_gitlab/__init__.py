@@ -794,6 +794,10 @@ def sync_jobs(project, pipeline):
             flatten_id(row, 'user')
             flatten_id(row, 'commit')
             flatten_id(row, 'pipeline')
+            if 'runner' in row and row['runner'] is not None:
+                row['runner_name'] = row['runner'].get('name')
+            else:
+                row['runner_name'] = None
             flatten_id(row, 'runner')
 
             transformed_row = transformer.transform(row, RESOURCES[entity]['schema'], mdata)
