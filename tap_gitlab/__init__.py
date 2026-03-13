@@ -700,7 +700,7 @@ def sync_group(gid, pids):
     except ResourceInaccessible as exc:
         # Don't halt execution if a Group is Inaccessible
         # Just skip it and continue with the rest of the extraction
-        return
+        return []
 
     time_extracted = utils.now()
 
@@ -719,13 +719,11 @@ def sync_group(gid, pids):
     if CONFIG['ultimate_license']:
         sync_epics(data)
 
-    if not stream.is_selected():
-        return
-
-    with Transformer(pre_hook=format_timestamp) as transformer:
-        data['inserted_at'] = utils.strftime(time_extracted)
-        group = transformer.transform(data, RESOURCES["groups"]["schema"], mdata)
-        singer.write_record("groups", group, time_extracted=time_extracted)
+    if stream.is_selected():
+        with Transformer(pre_hook=format_timestamp) as transformer:
+            data['inserted_at'] = utils.strftime(time_extracted)
+            group = transformer.transform(data, RESOURCES["groups"]["schema"], mdata)
+            singer.write_record("groups", group, time_extracted=time_extracted)
 
     return [str(project['id']) for project in data['projects']]
 
