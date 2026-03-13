@@ -1,112 +1,112 @@
 {
-  "type": "object",
-  "properties": {
-    "project_id": {
-      "type": ["null", "integer"]
-    },
-    "id": {
-      "type": ["null", "integer"]
-    },
-    "iid": {
-      "type": ["null", "integer"]
-    },
-    "name": {
-      "type": ["null", "string"]
-    },
-    "source": {
-      "type": ["null", "string"]
-    },
-    "status": {
-      "type": ["null", "string"]
-    },
-    "ref": {
-      "type": ["null", "string"]
-    },
-    "sha": {
-      "type": ["null", "string"]
-    },
-    "before_sha": {
-      "type": ["null", "string"]
-    },
-    "tag": {
-      "type": ["null", "boolean"]
-    },
-    "yaml_errors": {
-      "type": ["null", "string"]
-    },
-    "user": {
-      "type": ["object", "null"],
-      "properties": {
-        "name": {
-          "type": ["null", "string"]
-        },
-        "username": {
-          "type": ["null", "string"]
+    "type": "object",
+    "properties": {
+        "project_id": {
+            "type": ["null", "integer"]
         },
         "id": {
-          "type": ["null", "integer"]
+            "type": ["null", "integer"]
         },
-        "state": {
-          "type": ["null", "string"]
-        }
-      }
-    },
-    "created_at": {
-      "anyOf": [
-        {
-          "type": "string",
-          "format": "date-time"
+        "iid": {
+            "type": ["null", "integer"]
         },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "updated_at": {
-      "anyOf": [
-        {
-          "type": "string",
-          "format": "date-time"
+        "name": {
+            "type": ["null", "string"]
         },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "started_at": {
-      "type": ["null", "string"],
-      "format": "date-time"
-    },
-    "finished_at": {
-      "type": ["null", "string"],
-      "format": "date-time"
-    },
-    "committed_at": {
-      "type": ["null", "string"],
-      "format": "date-time"
-    },
-    "duration": {
-      "type": ["null", "integer"]
-    },
-    "queued_duration": {
-      "type": ["null", "number"]
-    },
-    "coverage": {
-      "type": ["null", "number"]
-    },
-    "web_url": {
-      "type": ["null", "string"]
-    },
-    "inserted_at": {
-      "anyOf": [
-        {
-          "type": "string",
-          "format": "date-time"
+        "source": {
+            "type": ["null", "string"]
         },
-        {
-          "type": "null"
+        "status": {
+            "type": ["null", "string"]
+        },
+        "ref": {
+            "type": ["null", "string"]
+        },
+        "sha": {
+            "type": ["null", "string"]
+        },
+        "before_sha": {
+            "type": ["null", "string"]
+        },
+        "tag": {
+            "type": ["null", "boolean"]
+        },
+        "yaml_errors": {
+            "type": ["null", "string"]
+        },
+        "user": {
+            "type": ["object", "null"],
+            "properties": {
+                "name": {
+                    "type": ["null", "string"]
+                },
+                "username": {
+                    "type": ["null", "string"]
+                },
+                "id": {
+                    "type": ["null", "integer"]
+                },
+                "state": {
+                    "type": ["null", "string"]
+                }
+            }
+        },
+        "created_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "updated_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "started_at": {
+            "type": ["null", "string"],
+            "format": "date-time"
+        },
+        "finished_at": {
+            "type": ["null", "string"],
+            "format": "date-time"
+        },
+        "committed_at": {
+            "type": ["null", "string"],
+            "format": "date-time"
+        },
+        "duration": {
+            "type": ["null", "integer"]
+        },
+        "queued_duration": {
+            "type": ["null", "number"]
+        },
+        "coverage": {
+            "type": ["null", "number"]
+        },
+        "web_url": {
+            "type": ["null", "string"]
+        },
+        "inserted_at": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
         }
-      ]
     }
-  }
 }
