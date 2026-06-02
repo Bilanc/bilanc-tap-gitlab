@@ -343,7 +343,7 @@ def sync_commits(project):
     state_key = "project_{}_commits".format(project["id"])
     start_date=get_start(state_key)
 
-    url = get_url(entity=entity, id=project['id'], start_date=start_date)
+    url = get_url(entity=entity, id=project['id'], start_date=start_date, ref=project.get('default_branch'))
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project["id"]
