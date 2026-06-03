@@ -58,7 +58,7 @@ RESOURCES = {
         'replication_method': 'FULL_TABLE',
     },
     'commits': {
-        'url': '/projects/{id}/repository/commits?since={start_date}&with_stats=true&all=true',
+        'url': '/projects/{id}/repository/commits?since={start_date}&with_stats=true&ref_name={ref}',
         'schema': load_schema('commits'),
         'key_properties': ['id'],
         'replication_method': 'INCREMENTAL',
@@ -216,7 +216,7 @@ class RetriableAPIError(Exception):
 def truthy(val) -> bool:
     return str(val).lower() in TRUTHY
 
-def get_url(entity, id, secondary_id=None, start_date=None):
+def get_url(entity, id, secondary_id=None, start_date=None, ref=None):
     if not isinstance(id, int):
         id = id.replace("/", "%2F")
 
@@ -226,7 +226,8 @@ def get_url(entity, id, secondary_id=None, start_date=None):
     return CONFIG['api_url'] + RESOURCES[entity]['url'].format(
             id=id,
             secondary_id=secondary_id,
-            start_date=start_date
+            start_date=start_date,
+            ref=ref
         )
 
 
@@ -342,7 +343,7 @@ def sync_commits(project):
     state_key = "project_{}_commits".format(project["id"])
     start_date=get_start(state_key)
 
-    url = get_url(entity=entity, id=project['id'], start_date=start_date)
+    url = get_url(entity=entity, id=project['id'], start_date=start_date, ref=project.get('default_branch', 'main'))
     with Transformer(pre_hook=format_timestamp) as transformer:
         for row in gen_request(url):
             row['project_id'] = project["id"]
