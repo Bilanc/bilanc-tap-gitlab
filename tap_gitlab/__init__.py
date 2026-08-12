@@ -58,7 +58,7 @@ RESOURCES = {
         'replication_method': 'FULL_TABLE',
     },
     'commits': {
-        'url': '/projects/{id}/repository/commits?since={start_date}&with_stats=true&ref_name={ref}',
+        'url': '/projects/{id}/repository/commits?since={start_date}&ref_name={ref}',
         'schema': load_schema('commits'),
         'key_properties': ['id'],
         'replication_method': 'INCREMENTAL',
@@ -237,11 +237,7 @@ def get_start(entity):
     return STATE[entity]
 
 
-@backoff.on_exception(backoff.expo,
-                      (requests.exceptions.RequestException, RetriableAPIError),
-                      max_tries=5,
-                      factor=2)
-def request(url, params=None):
+def request_once(url, params=None):
     params = params or {}
 
     auth_token = AUTH.get_auth_token()
@@ -269,6 +265,14 @@ def request(url, params=None):
                 url, resp.status_code, resp.content))
 
     return resp
+
+
+@backoff.on_exception(backoff.expo,
+                      (requests.exceptions.RequestException, RetriableAPIError),
+                      max_tries=5,
+                      factor=2)
+def request(url, params=None):
+    return request_once(url, params)
 
 def gen_request(url):
     LOGGER.info("Fetching data from: {}".format(url))
@@ -300,6 +304,70 @@ def gen_request(url):
         # Don't halt execution if a Resource is Inaccessible
         # Just skip it and continue with the rest of the extraction
         return []
+
+def fetch_commit_stats(project_id, commit_id):
+    """
+    Fetch the diff stats for a single commit.
+
+    Returns None when GitLab cannot produce them. Commits touching very large
+    binaries can exceed the Gitaly diff deadline and 500 every time, so this
+    does not retry - the commit is still worth syncing without its stats.
+    """
+    url = "{}/projects/{}/repository/commits/{}".format(
+        CONFIG['api_url'], project_id, commit_id)
+
+    try:
+        return request_once(url).json().get('stats')
+    except (RetriableAPIError,
+            ResourceInaccessible,
+            requests.exceptions.RequestException):
+        LOGGER.warning(
+            "Could not fetch stats for commit {} in project {}, "
+            "syncing it without stats".format(commit_id, project_id))
+        return None
+
+def gen_commits_request(project_id, url):
+    """
+    Page through a project's commits, asking for stats in bulk.
+
+    A single commit whose diff GitLab cannot compute fails the entire page, so
+    fall back to fetching that page's commits one at a time. That keeps the
+    other commits on the page instead of losing the project's whole sync.
+    """
+    LOGGER.info("Fetching data from: {}".format(url))
+    params = {
+        'page': 1,
+        'per_page': PER_PAGE_MAX
+    }
+
+    next_page = 1
+
+    try:
+        while next_page:
+            params['page'] = int(next_page)
+
+            try:
+                resp = request(url, dict(params, with_stats='true'))
+                rows = resp.json()
+            except RetriableAPIError:
+                LOGGER.warning(
+                    "Could not fetch stats for page {} of project {} commits, "
+                    "falling back to fetching them individually".format(
+                        params['page'], project_id))
+                resp = request(url, params)
+                rows = resp.json()
+                for row in rows:
+                    row['stats'] = fetch_commit_stats(project_id, row['id'])
+
+            LOGGER.info("Received {} records".format(len(rows)))
+            for row in rows:
+                yield row
+
+            next_page = resp.headers.get('X-Next-Page', None)
+    except ResourceInaccessible as exc:
+        # Don't halt execution if a Resource is Inaccessible
+        # Just skip it and continue with the rest of the extraction
+        return
 
 def format_timestamp(data, typ, schema):
     result = data
@@ -342,16 +410,28 @@ def sync_commits(project):
     # Keep a state for the commits fetched per project
     state_key = "project_{}_commits".format(project["id"])
     start_date=get_start(state_key)
+    resume_from = STATE[state_key]
 
     url = get_url(entity=entity, id=project['id'], start_date=start_date, ref=project.get('default_branch', 'main'))
-    with Transformer(pre_hook=format_timestamp) as transformer:
-        for row in gen_request(url):
-            row['project_id'] = project["id"]
-            row['inserted_at'] = utils.strftime(utils.now())
-            transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
+    try:
+        with Transformer(pre_hook=format_timestamp) as transformer:
+            for row in gen_commits_request(project['id'], url):
+                row['project_id'] = project["id"]
+                row['inserted_at'] = utils.strftime(utils.now())
+                transformed_row = transformer.transform(row, RESOURCES[entity]["schema"], mdata)
 
-            singer.write_record(entity, transformed_row, time_extracted=utils.now())
-            utils.update_state(STATE, state_key, row['created_at'])
+                singer.write_record(entity, transformed_row, time_extracted=utils.now())
+                utils.update_state(STATE, state_key, row['created_at'])
+    except RetriableAPIError:
+        # GitLab kept failing on this project's commits. Skip the project rather
+        # than halting every remaining stream, and roll the bookmark back: commits
+        # arrive newest first, so a partially advanced bookmark would permanently
+        # skip the older commits we never got to.
+        LOGGER.error(
+            "Giving up on commits for project {}, will retry from {} "
+            "on the next run".format(project["id"], resume_from))
+        STATE[state_key] = resume_from
+        return
 
     singer.write_state(STATE)
 

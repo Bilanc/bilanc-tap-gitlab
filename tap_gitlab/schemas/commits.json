@@ -78,7 +78,7 @@
             ]
         },
         "stats": {
-            "type": "object",
+            "type": ["null", "object"],
             "properties": {
                 "additions": {
                   "type": ["null", "integer"]
