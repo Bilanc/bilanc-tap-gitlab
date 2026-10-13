@@ -273,7 +273,9 @@ def request_once(url, params=None):
         LOGGER.info("Received error: {} - {}".format(
             resp.status_code, truncate_body(resp.content)))
         LOGGER.info("Retrying request to {}".format(url))
-        raise RetriableAPIError("Retriable error")
+        raise RetriableAPIError(
+            "Retriable error making request to GitLab API: GET {} [{} - {}]".format(
+                url, resp.status_code, truncate_body(resp.content)))
     elif resp.status_code >= 400:
         raise Exception(
             "Error making request to GitLab API: GET {} [{} - {}]".format(

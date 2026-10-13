@@ -49,9 +49,13 @@ class RequestRetryTests(unittest.TestCase):
 
     def test_persistent_503_gives_up_after_max_tries(self):
         self.session.request.side_effect = [make_response(503, HTML_503)] * 10
-        with self.assertRaises(tap_gitlab.RetriableAPIError):
+        with self.assertRaises(tap_gitlab.RetriableAPIError) as ctx:
             tap_gitlab.request("https://gitlab.com/api/v4/projects/1/users")
         self.assertEqual(self.session.request.call_count, 5)
+        message = str(ctx.exception)
+        self.assertIn("[503 - ", message)
+        self.assertIn("503 Server Unavailable", message)
+        self.assertLess(len(message), 500)
 
     def test_non_retriable_error_is_raised_once_with_truncated_body(self):
         self.session.request.side_effect = [make_response(422, HTML_503)]
