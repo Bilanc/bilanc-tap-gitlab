@@ -237,6 +237,20 @@ def get_start(entity):
     return STATE[entity]
 
 
+RETRIABLE_STATUS_CODES = [429, 500, 502, 503, 504]
+ERROR_BODY_MAX_CHARS = 300
+
+
+def truncate_body(content):
+    """Keep error bodies short: GitLab 5xx responses are full HTML pages."""
+    if isinstance(content, bytes):
+        content = content.decode('utf-8', errors='replace')
+    content = ' '.join(str(content).split())
+    if len(content) > ERROR_BODY_MAX_CHARS:
+        return content[:ERROR_BODY_MAX_CHARS] + '...'
+    return content
+
+
 def request_once(url, params=None):
     params = params or {}
 
@@ -255,14 +269,15 @@ def request_once(url, params=None):
     elif resp.status_code == 404 and '/repository/' in url:
         LOGGER.warning("Repository not found (empty repo?): {}".format(url))
         raise ResourceInaccessible
-    elif resp.status_code in [429, 500, 502]:
-        LOGGER.info("Received error: {} - {}".format(resp.status_code, resp.content))
+    elif resp.status_code in RETRIABLE_STATUS_CODES:
+        LOGGER.info("Received error: {} - {}".format(
+            resp.status_code, truncate_body(resp.content)))
         LOGGER.info("Retrying request to {}".format(url))
         raise RetriableAPIError("Retriable error")
     elif resp.status_code >= 400:
         raise Exception(
             "Error making request to GitLab API: GET {} [{} - {}]".format(
-                url, resp.status_code, resp.content))
+                url, resp.status_code, truncate_body(resp.content)))
 
     return resp
 
