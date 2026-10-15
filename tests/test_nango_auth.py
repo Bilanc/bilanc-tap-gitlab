@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest import mock
 
 import requests
@@ -175,16 +176,19 @@ class NangoAuthTests(unittest.TestCase):
 
         self.assertEqual(self.make_auth().get_auth_token(), "new-token")
         self.assertEqual(self.session.get.call_count, 2)
-        self.sleep.assert_any_call(7)
+        self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), 7)
 
-    def test_429_gives_up_after_max_tries(self):
-        self.session.get.return_value = response(429, reason="Too Many Requests")
+    def test_429_gives_up_after_max_tries_without_a_final_wait(self):
+        limited = response(429, reason="Too Many Requests")
+        limited.headers["Retry-After"] = "60"
+        self.session.get.return_value = limited
 
         with self.assertRaises(auth.NangoServerError) as ctx:
             self.make_auth().get_auth_token()
 
         self.assertEqual(self.session.get.call_count, auth.NANGO_MAX_TRIES)
         self.assertIn("429", str(ctx.exception))
+        self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), 60 * (auth.NANGO_MAX_TRIES - 1))
 
     def test_timeout_connection_and_chunked_encoding_errors_are_retried(self):
         self.session.get.side_effect = [
@@ -219,7 +223,16 @@ class RetryAfterSecondsTests(unittest.TestCase):
         self.assertEqual(auth.retry_after_seconds(resp), 0)
         resp.headers["Retry-After"] = "600"
         self.assertEqual(auth.retry_after_seconds(resp), auth.NANGO_MAX_RETRY_AFTER)
-        resp.headers["Retry-After"] = "Wed, 21 Oct 2026 07:28:00 GMT"
+        resp.headers["Retry-After"] = "not a date"
+        self.assertEqual(auth.retry_after_seconds(resp), 0)
+
+    def test_http_date(self):
+        resp = response(429)
+        resp.headers["Retry-After"] = format_datetime(
+            datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True
+        )
+        self.assertTrue(27 < auth.retry_after_seconds(resp) <= 30)
+        resp.headers["Retry-After"] = "Wed, 21 Oct 2015 07:28:00 GMT"
         self.assertEqual(auth.retry_after_seconds(resp), 0)
 
 
