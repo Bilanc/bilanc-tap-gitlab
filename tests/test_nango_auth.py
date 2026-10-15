@@ -188,6 +188,15 @@ class NangoAuthTests(unittest.TestCase):
         self.assertEqual(self.session.get.call_count, auth.NANGO_MAX_TRIES)
         self.assertIn("429", str(ctx.exception))
 
+    def test_negative_retry_after_is_clamped(self):
+        limited = response(429, reason="Too Many Requests")
+        limited.headers["Retry-After"] = "-3"
+        self.session.get.side_effect = [limited, ok_response()]
+
+        self.assertEqual(self.make_auth().get_auth_token(), "new-token")
+        self.assertEqual(self.session.get.call_count, 2)
+        self.sleep.assert_any_call(0)
+
     def test_timeout_connection_and_chunked_encoding_errors_are_retried(self):
         self.session.get.side_effect = [
             requests.Timeout("timed out"),
@@ -229,6 +238,10 @@ class OutlivesMarginTests(unittest.TestCase):
 
 
 class NangoErrorDetailsTests(unittest.TestCase):
+    def test_list_error_body_is_not_echoed(self):
+        resp = response(400, {"error": ["token=secret"]})
+        self.assertEqual(auth.nango_error_details(resp), "HTTP 400")
+
     def test_prefers_code_and_message(self):
         self.assertEqual(
             auth.nango_error_details(refresh_error(message="nope")),
