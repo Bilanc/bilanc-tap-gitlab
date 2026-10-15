@@ -1,9 +1,7 @@
 import requests
 import json
-import sys
 import time
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 
 import backoff
 import singer
@@ -13,98 +11,44 @@ LOGGER = singer.get_logger()
 NANGO_API_URL = "https://api.nango.dev"
 NANGO_REQUEST_TIMEOUT = 30
 NANGO_MAX_TRIES = 5
-NANGO_FORCE_REFRESH_RETRY_DELAY = 5
 NANGO_MAX_RETRY_AFTER = 60
+NANGO_FORCE_REFRESH_RETRY_DELAY = 5
 NANGO_EXPIRES_AT_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
-# The tap treats a Nango access token as stale this long before `expires_at`
-# (Nango itself refreshes within 15 minutes of expiry). A token handed back by
-# the no-force fallback must outlive this margin, otherwise every GitLab
-# request would re-run the failing forced refresh.
+# The tap refreshes this long before `expires_at`; a token taken from the
+# no-force fallback must outlive it or the tap would refresh again right away.
 NANGO_EXPIRY_MARGIN = timedelta(minutes=20)
 
 
 class NangoServerError(Exception):
-    """Nango answered with a 429 or 5xx; retried by `fetch_nango_connection`."""
-
-    def __init__(self, message, retry_after=0):
-        super().__init__(message)
-        self.retry_after = retry_after
+    """Nango answered 429 or 5xx; retried by `fetch_nango_connection`."""
 
 
 class NangoRefreshError(Exception):
-    """Nango could not serve credentials for the connection (non-retriable)."""
-
-    def __init__(self, message, response=None):
-        super().__init__(message)
-        self.response = response
-        self.status_code = response.status_code if response is not None else None
+    """Nango could not serve credentials for the connection."""
 
 
 def nango_error_details(response):
-    """Return Nango's `error.code: error.message` from an error body.
-
-    Only the error fields are surfaced so alerts never carry the connection
-    payload (end user name/email, credentials).
-    """
+    """Nango's `error.code: error.message`; never the connection payload."""
     try:
-        body = response.json()
-    except ValueError:
-        body = None
-
-    error = body.get("error") if isinstance(body, dict) else None
+        error = response.json().get("error")
+    except (ValueError, AttributeError):
+        error = None
     if isinstance(error, dict):
-        code = error.get("code") or error.get("type")
-        message = error.get("message")
-        details = ": ".join(str(part) for part in (code, message) if part)
-        if details:
-            return details
-    if isinstance(error, str) and error:
-        return error
-
-    return (response.reason or "").strip() or f"HTTP {response.status_code}"
+        error = ": ".join(str(v) for v in (error.get("code"), error.get("message")) if v)
+    return str(error or response.reason or f"HTTP {response.status_code}")
 
 
-def retry_after_seconds(response):
-    """Seconds Nango asked us to wait (`Retry-After`, delay or HTTP-date), capped."""
-    header = response.headers.get("Retry-After")
-    if not header:
-        return 0
+def _retry_after(response):
     try:
-        seconds = int(header)
+        return min(int(response.headers.get("Retry-After", 0)), NANGO_MAX_RETRY_AFTER)
     except ValueError:
-        try:
-            retry_at = parsedate_to_datetime(header)
-        except (TypeError, ValueError):
-            return 0
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
-        seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
-    return min(max(seconds, 0), NANGO_MAX_RETRY_AFTER)
-
-
-def _wait_for_retry_after(details):
-    """backoff hook: top the backoff delay up to Nango's `Retry-After`.
-
-    Runs only when another attempt follows, so an exhausted retry budget
-    fails immediately instead of sleeping first.
-    """
-    error = sys.exc_info()[1]
-    extra = getattr(error, "retry_after", 0) - details.get("wait", 0)
-    if extra > 0:
-        time.sleep(extra)
+        return 0
 
 
 @backoff.on_exception(
     backoff.expo,
-    (
-        requests.Timeout,
-        requests.ConnectionError,
-        requests.exceptions.ChunkedEncodingError,
-        NangoServerError,
-    ),
+    (requests.RequestException, NangoServerError),
     max_tries=NANGO_MAX_TRIES,
-    factor=2,
-    on_backoff=_wait_for_retry_after,
 )
 def fetch_nango_connection(session, connection_id, secret_key, provider_config_key, force_refresh):
     """GET the Nango connection, retrying timeouts, connection errors, 429 and 5xx."""
@@ -114,20 +58,16 @@ def fetch_nango_connection(session, connection_id, secret_key, provider_config_k
 
     response = session.get(
         url,
-        headers={
-            "Authorization": f"Bearer {secret_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {secret_key}"},
         timeout=NANGO_REQUEST_TIMEOUT,
     )
 
+    if response.status_code == 429:
+        time.sleep(_retry_after(response))
     if response.status_code == 429 or response.status_code >= 500:
         raise NangoServerError(
-            f"Nango returned {response.status_code} fetching connection "
-            f"(force_refresh={force_refresh}): {nango_error_details(response)}",
-            retry_after=retry_after_seconds(response),
+            f"Nango returned {response.status_code}: {nango_error_details(response)}"
         )
-
     return response
 
 
@@ -136,12 +76,9 @@ def parse_nango_expires_at(expires_at_str):
 
 
 def _outlives_margin(expires_at_str):
-    """True if the token is usable for longer than `NANGO_EXPIRY_MARGIN`."""
-    if not expires_at_str:
-        return False
     try:
         expiry = parse_nango_expires_at(expires_at_str)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
     return expiry - NANGO_EXPIRY_MARGIN > datetime.now(timezone.utc)
 
@@ -214,31 +151,22 @@ class GitlabAuth:
         if self.__access_token is None or self.__expires_at <= datetime.now(timezone.utc):
             if not self.__nango_secret_key or not self.__nango_connection_id:
                 raise Exception("nango_secret_key and nango_connection_id are required for Nango authentication")
-            
+
             provider_key: str = "gitlab-pat" if self.__self_hosted else "gitlab"
 
-            # Timeouts, connection errors and Nango 5xx are backed off and
-            # retried. A 400 on the forced refresh (GitLab rejected this one
-            # refresh) is retried once without force_refresh since Nango still
-            # holds a valid token; that token is only accepted if it outlives
-            # NANGO_EXPIRY_MARGIN so we do not re-run the failing refresh on
-            # every request. Anything else non-2xx raises NangoRefreshError
-            # with Nango's error code/message only (never the connection
-            # payload, which carries the end user's name and email).
+            # A 400 on the forced refresh (GitLab rejected that one refresh) is
+            # retried once without force_refresh; the token Nango still holds
+            # is used if it outlives NANGO_EXPIRY_MARGIN.
             response = fetch_nango_connection(
                 self.__session, self.__nango_connection_id, self.__nango_secret_key,
                 provider_key, force_refresh=True)
 
-            forced_refresh_response = None
             forced_refresh_error = None
             if response.status_code == 400:
-                forced_refresh_response = response
                 forced_refresh_error = nango_error_details(response)
                 LOGGER.warning(
-                    "Nango returned 400 on force_refresh of connection (%s); retrying in "
-                    "%ss without force_refresh",
+                    "Nango force_refresh failed (%s); retrying without force_refresh",
                     forced_refresh_error,
-                    NANGO_FORCE_REFRESH_RETRY_DELAY,
                 )
                 time.sleep(NANGO_FORCE_REFRESH_RETRY_DELAY)
                 response = fetch_nango_connection(
@@ -248,28 +176,25 @@ class GitlabAuth:
             if not response.ok:
                 raise NangoRefreshError(
                     f"Nango returned {response.status_code} for connection "
-                    f"{self.__nango_connection_id} ({provider_key}): "
-                    f"{nango_error_details(response)}",
-                    response,
+                    f"{self.__nango_connection_id}: {nango_error_details(response)}"
                 )
 
             credentials = response.json().get("credentials", {})
 
-            if not self.__self_hosted:
-                expires_at_str = credentials.get("expires_at")
-                if forced_refresh_error is not None and not _outlives_margin(expires_at_str):
-                    raise NangoRefreshError(
-                        f"Nango returned 400 on force_refresh for connection "
-                        f"{self.__nango_connection_id} ({provider_key}): "
-                        f"{forced_refresh_error}; the token Nango still holds expires at "
-                        f"{expires_at_str}, too soon to use",
-                        forced_refresh_response,
-                    )
-                self.__access_token = credentials.get("access_token")
-                self.__expires_at = parse_nango_expires_at(expires_at_str) - NANGO_EXPIRY_MARGIN
-            else:
+            if self.__self_hosted:
                 self.__access_token = credentials.get("apiKey")
                 self.__expires_at = datetime.max.replace(tzinfo=timezone.utc)
+                return
+
+            expires_at_str = credentials.get("expires_at")
+            if forced_refresh_error and not _outlives_margin(expires_at_str):
+                raise NangoRefreshError(
+                    f"Nango returned 400 on force_refresh for connection "
+                    f"{self.__nango_connection_id}: {forced_refresh_error}; the token "
+                    f"Nango still holds expires at {expires_at_str}, too soon to use"
+                )
+            self.__access_token = credentials.get("access_token")
+            self.__expires_at = parse_nango_expires_at(expires_at_str) - NANGO_EXPIRY_MARGIN
 
     def get_auth_token(self):
         if self.__private_token:
