@@ -168,6 +168,24 @@ class NangoAuthTests(unittest.TestCase):
         self.assertIn("503", str(ctx.exception))
         self.assertIn("Service Temporarily Unavailable", str(ctx.exception))
 
+    def test_429_is_retried_after_retry_after(self):
+        limited = response(429, reason="Too Many Requests")
+        limited.headers["Retry-After"] = "7"
+        self.session.get.side_effect = [limited, ok_response()]
+
+        self.assertEqual(self.make_auth().get_auth_token(), "new-token")
+        self.assertEqual(self.session.get.call_count, 2)
+        self.sleep.assert_any_call(7)
+
+    def test_429_gives_up_after_max_tries(self):
+        self.session.get.return_value = response(429, reason="Too Many Requests")
+
+        with self.assertRaises(auth.NangoServerError) as ctx:
+            self.make_auth().get_auth_token()
+
+        self.assertEqual(self.session.get.call_count, auth.NANGO_MAX_TRIES)
+        self.assertIn("429", str(ctx.exception))
+
     def test_timeout_connection_and_chunked_encoding_errors_are_retried(self):
         self.session.get.side_effect = [
             requests.Timeout("timed out"),
@@ -193,6 +211,16 @@ class NangoAuthTests(unittest.TestCase):
             dt.max = datetime.max
             self.assertEqual(gitlab_auth.get_auth_token(), "second")
         self.assertEqual(self.session.get.call_count, 2)
+
+
+class RetryAfterSecondsTests(unittest.TestCase):
+    def test_caps_and_defaults(self):
+        resp = response(429)
+        self.assertEqual(auth.retry_after_seconds(resp), 0)
+        resp.headers["Retry-After"] = "600"
+        self.assertEqual(auth.retry_after_seconds(resp), auth.NANGO_MAX_RETRY_AFTER)
+        resp.headers["Retry-After"] = "Wed, 21 Oct 2026 07:28:00 GMT"
+        self.assertEqual(auth.retry_after_seconds(resp), 0)
 
 
 class OutlivesMarginTests(unittest.TestCase):

@@ -12,6 +12,7 @@ NANGO_API_URL = "https://api.nango.dev"
 NANGO_REQUEST_TIMEOUT = 30
 NANGO_MAX_TRIES = 5
 NANGO_FORCE_REFRESH_RETRY_DELAY = 5
+NANGO_MAX_RETRY_AFTER = 60
 NANGO_EXPIRES_AT_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 # The tap treats a Nango access token as stale this long before `expires_at`
 # (Nango itself refreshes within 15 minutes of expiry). A token handed back by
@@ -21,7 +22,7 @@ NANGO_EXPIRY_MARGIN = timedelta(minutes=20)
 
 
 class NangoServerError(Exception):
-    """Nango answered with a 5xx; retried by `fetch_nango_connection`."""
+    """Nango answered with a 429 or 5xx; retried by `fetch_nango_connection`."""
 
 
 class NangoRefreshError(Exception):
@@ -57,6 +58,15 @@ def nango_error_details(response):
     return (response.reason or "").strip() or f"HTTP {response.status_code}"
 
 
+def retry_after_seconds(response):
+    """Seconds Nango asked us to wait (`Retry-After`), capped; 0 if absent."""
+    try:
+        seconds = int(response.headers.get("Retry-After", 0))
+    except (TypeError, ValueError):
+        return 0
+    return min(max(seconds, 0), NANGO_MAX_RETRY_AFTER)
+
+
 @backoff.on_exception(
     backoff.expo,
     (
@@ -69,7 +79,7 @@ def nango_error_details(response):
     factor=2,
 )
 def fetch_nango_connection(session, connection_id, secret_key, provider_config_key, force_refresh):
-    """GET the Nango connection, retrying timeouts, connection errors and 5xx."""
+    """GET the Nango connection, retrying timeouts, connection errors, 429 and 5xx."""
     url = f"{NANGO_API_URL}/connection/{connection_id}?provider_config_key={provider_config_key}"
     if force_refresh:
         url += "&force_refresh=true"
@@ -83,7 +93,9 @@ def fetch_nango_connection(session, connection_id, secret_key, provider_config_k
         timeout=NANGO_REQUEST_TIMEOUT,
     )
 
-    if response.status_code >= 500:
+    if response.status_code == 429:
+        time.sleep(retry_after_seconds(response))
+    if response.status_code == 429 or response.status_code >= 500:
         raise NangoServerError(
             f"Nango returned {response.status_code} fetching connection "
             f"(force_refresh={force_refresh}): {nango_error_details(response)}"
