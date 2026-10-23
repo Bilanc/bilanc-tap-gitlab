@@ -230,6 +230,25 @@ class GiveUpOnStreamTests(unittest.TestCase):
             {"with_stats": "true"})
         self.assertEqual(tap_gitlab.GIVE_UP_STREAK['count'], 0)
 
+    def test_commit_stats_connection_errors_fall_back_to_the_long_window(self):
+        # a GitLab restart during the bulk with_stats call must go through the
+        # 5-minute request() path, not skip the project's commits for the run
+        page = make_response(200)
+        page.json.return_value = [{"id": "abc123"}]
+        page.headers = {"X-Next-Page": ""}
+        stats = {"additions": 1, "deletions": 2, "total": 3}
+        commit = make_response(200)
+        commit.json.return_value = {"id": "abc123", "stats": stats}
+        # 5 errors exhaust request_few_tries, 2 more are retried by request(),
+        # then the page arrives and each commit's stats are fetched individually
+        self.session.request.side_effect = (
+            [requests.exceptions.ConnectionError("refused")] * 7 + [page, commit])
+        rows = list(tap_gitlab.gen_commits_request(
+            1, "https://gitlab.com/api/v4/projects/1/repository/commits"))
+        self.assertEqual(rows, [{"id": "abc123", "stats": stats}])
+        self.assertEqual(self.session.request.call_count, 9)
+        self.assertEqual(tap_gitlab.GIVE_UP_STREAK['count'], 0)
+
     def test_other_exceptions_still_propagate(self):
         def broken(project):
             raise ValueError("boom")
