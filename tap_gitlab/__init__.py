@@ -281,42 +281,41 @@ def request_once(url, params=None):
             "Error making request to GitLab API: GET {} [{} - {}]".format(
                 url, resp.status_code, truncate_body(resp.content)))
 
+    GIVE_UP_STREAK['count'] = 0
     return resp
 
 
 # A self-hosted GitLab that restarts or returns 5xx for a minute or two used to
 # sink hour-long syncs: five tries with factor=2 gave up after ~25 s. Keep
-# retrying for up to five minutes, never sleeping more than a minute at once.
-REQUEST_MAX_TRIES = 10
+# retrying for up to five minutes of wall-clock time (backoff caps the last
+# wait so the final attempt lands at the deadline), never sleeping more than a
+# minute at once. No max_tries: with backoff's default full jitter a fixed try
+# count would usually give up well before the deadline.
 REQUEST_MAX_TIME = 300
 REQUEST_MAX_WAIT = 60
+
+TRANSIENT_ERRORS = (requests.exceptions.RequestException, RetriableAPIError)
 
 # Non-bookmarked streams are skipped for one project when GitLab keeps failing,
 # but if that happens for several streams in a row without a single successful
 # request in between the instance is down: abort instead of crawling through
-# every remaining project at full backoff.
+# every remaining project at full backoff. request_once() resets the streak on
+# every successful response.
 MAX_CONSECUTIVE_GIVE_UPS = 3
 GIVE_UP_STREAK = {'count': 0}
 
 
 @backoff.on_exception(backoff.expo,
-                      (requests.exceptions.RequestException, RetriableAPIError),
-                      max_tries=REQUEST_MAX_TRIES,
+                      TRANSIENT_ERRORS,
                       max_time=REQUEST_MAX_TIME,
                       factor=2,
                       max_value=REQUEST_MAX_WAIT)
-def request_with_backoff(url, params=None):
+def request(url, params=None):
     return request_once(url, params)
 
 
-def request(url, params=None):
-    resp = request_with_backoff(url, params)
-    GIVE_UP_STREAK['count'] = 0
-    return resp
-
-
 @backoff.on_exception(backoff.expo,
-                      (requests.exceptions.RequestException, RetriableAPIError),
+                      TRANSIENT_ERRORS,
                       max_tries=5,
                       factor=2)
 def request_few_tries(url, params=None):
@@ -357,7 +356,7 @@ def sync_full_refresh_stream(sync_fn, entity, project):
     """
     try:
         sync_fn(project)
-    except RetriableAPIError as exc:
+    except TRANSIENT_ERRORS as exc:
         give_up_on_stream(entity, project['id'], exc)
 
 def gen_request(url):
@@ -508,7 +507,7 @@ def sync_commits(project):
 
                 singer.write_record(entity, transformed_row, time_extracted=utils.now())
                 utils.update_state(STATE, state_key, row['created_at'])
-    except RetriableAPIError as exc:
+    except TRANSIENT_ERRORS as exc:
         # GitLab kept failing on this project's commits. Skip the project rather
         # than halting every remaining stream, and roll the bookmark back: commits
         # arrive newest first, so a partially advanced bookmark would permanently
