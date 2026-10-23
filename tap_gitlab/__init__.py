@@ -284,12 +284,81 @@ def request_once(url, params=None):
     return resp
 
 
+# A self-hosted GitLab that restarts or returns 5xx for a minute or two used to
+# sink hour-long syncs: five tries with factor=2 gave up after ~25 s. Keep
+# retrying for up to five minutes, never sleeping more than a minute at once.
+REQUEST_MAX_TRIES = 10
+REQUEST_MAX_TIME = 300
+REQUEST_MAX_WAIT = 60
+
+# Non-bookmarked streams are skipped for one project when GitLab keeps failing,
+# but if that happens for several streams in a row without a single successful
+# request in between the instance is down: abort instead of crawling through
+# every remaining project at full backoff.
+MAX_CONSECUTIVE_GIVE_UPS = 3
+GIVE_UP_STREAK = {'count': 0}
+
+
+@backoff.on_exception(backoff.expo,
+                      (requests.exceptions.RequestException, RetriableAPIError),
+                      max_tries=REQUEST_MAX_TRIES,
+                      max_time=REQUEST_MAX_TIME,
+                      factor=2,
+                      max_value=REQUEST_MAX_WAIT)
+def request_with_backoff(url, params=None):
+    return request_once(url, params)
+
+
+def request(url, params=None):
+    resp = request_with_backoff(url, params)
+    GIVE_UP_STREAK['count'] = 0
+    return resp
+
+
 @backoff.on_exception(backoff.expo,
                       (requests.exceptions.RequestException, RetriableAPIError),
                       max_tries=5,
                       factor=2)
-def request(url, params=None):
+def request_few_tries(url, params=None):
+    """
+    Short retry window for requests that have a fallback.
+
+    A commit page whose bulk stats GitLab can never compute 500s every time;
+    it should fall back after seconds, not block for the full outage window.
+    """
     return request_once(url, params)
+
+
+def give_up_on_stream(entity, project_id, exc):
+    """
+    Called once request() has exhausted its retries for a stream of one project.
+
+    Skips the stream for this run unless GitLab has now failed
+    MAX_CONSECUTIVE_GIVE_UPS streams in a row, in which case the error is
+    re-raised and the sync fails.
+    """
+    GIVE_UP_STREAK['count'] += 1
+    if GIVE_UP_STREAK['count'] >= MAX_CONSECUTIVE_GIVE_UPS:
+        LOGGER.error(
+            "GitLab failed {} streams in a row, aborting the sync".format(
+                GIVE_UP_STREAK['count']))
+        raise exc
+    LOGGER.error(
+        "Giving up on {} for project {}, will retry on the next run: {}".format(
+            entity, project_id, exc))
+
+
+def sync_full_refresh_stream(sync_fn, entity, project):
+    """
+    Run a per-project stream that has no bookmark.
+
+    These streams are re-fetched in full every run, so one that GitLab cannot
+    serve right now can be skipped without losing data for good.
+    """
+    try:
+        sync_fn(project)
+    except RetriableAPIError as exc:
+        give_up_on_stream(entity, project['id'], exc)
 
 def gen_request(url):
     LOGGER.info("Fetching data from: {}".format(url))
@@ -364,7 +433,7 @@ def gen_commits_request(project_id, url):
             params['page'] = int(next_page)
 
             try:
-                resp = request(url, dict(params, with_stats='true'))
+                resp = request_few_tries(url, dict(params, with_stats='true'))
                 rows = resp.json()
             except RetriableAPIError:
                 LOGGER.warning(
@@ -439,15 +508,14 @@ def sync_commits(project):
 
                 singer.write_record(entity, transformed_row, time_extracted=utils.now())
                 utils.update_state(STATE, state_key, row['created_at'])
-    except RetriableAPIError:
+    except RetriableAPIError as exc:
         # GitLab kept failing on this project's commits. Skip the project rather
         # than halting every remaining stream, and roll the bookmark back: commits
         # arrive newest first, so a partially advanced bookmark would permanently
         # skip the older commits we never got to.
-        LOGGER.error(
-            "Giving up on commits for project {}, will retry from {} "
-            "on the next run".format(project["id"], resume_from))
         STATE[state_key] = resume_from
+        give_up_on_stream("commits (resuming from {})".format(resume_from),
+                          project["id"], exc)
         return
 
     singer.write_state(STATE)
@@ -924,16 +992,16 @@ def sync_project(pid):
             "There is no last_activity_at or created_at field on project {}. This usually means I don't have access to the project."
             .format(data['id']))
 
-    sync_members(data)
-    sync_users(data)
+    sync_full_refresh_stream(sync_members, "members", data)
+    sync_full_refresh_stream(sync_users, "users", data)
     sync_issues(data)
     sync_merge_requests(data)
     sync_commits(data)
-    sync_branches(data)
-    sync_milestones(data)
-    sync_labels(data)
-    sync_releases(data)
-    sync_tags(data)
+    sync_full_refresh_stream(sync_branches, "branches", data)
+    sync_full_refresh_stream(sync_milestones, "milestones", data)
+    sync_full_refresh_stream(sync_labels, "labels", data)
+    sync_full_refresh_stream(sync_releases, "releases", data)
+    sync_full_refresh_stream(sync_tags, "tags", data)
     sync_pipelines(data)
 
     if not stream.is_selected():
