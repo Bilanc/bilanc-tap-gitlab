@@ -160,6 +160,46 @@ class RequestRetryTests(unittest.TestCase):
                 {"with_stats": "true"})
         self.assertEqual(self.session.request.call_count, 5)
 
+    def test_commit_page_connection_error_reaches_the_long_retry(self):
+        # A restart that refuses connections past the ~25s stats window must
+        # still be ridden out by request(), not skip the project's commits.
+        page = make_response(200)
+        page.json.return_value = [{"id": "abc123"}]
+        stats = make_response(200)
+        stats.json.return_value = {"stats": {"additions": 1, "deletions": 2, "total": 3}}
+        # 5 short with_stats tries, then 2 more inside the five-minute retry.
+        failures = 7
+        self.session.request.side_effect = (
+            [requests.exceptions.ConnectionError("refused")] * failures
+            + [page, stats])
+
+        rows = list(tap_gitlab.gen_commits_request(
+            1, "https://gitlab.com/api/v4/projects/1/repository/commits"))
+
+        self.assertEqual([row["id"] for row in rows], ["abc123"])
+        self.assertEqual(rows[0]["stats"], {"additions": 1, "deletions": 2, "total": 3})
+        self.assertEqual(self.session.request.call_count, failures + 2)
+        self.assertEqual(
+            self.session.request.call_args_list[0].kwargs["params"].get("with_stats"),
+            "true")
+        long_params = self.session.request.call_args_list[5].kwargs["params"]
+        self.assertNotIn("with_stats", long_params)
+        self.assertLess(self.clock.elapsed, tap_gitlab.REQUEST_MAX_TIME)
+
+    def test_commit_page_connection_error_still_gives_up_after_the_long_window(self):
+        def refused(*args, **kwargs):
+            raise requests.exceptions.ConnectionError("refused")
+
+        self.session.request.side_effect = refused
+        with self.assertRaises(requests.exceptions.ConnectionError):
+            list(tap_gitlab.gen_commits_request(
+                1, "https://gitlab.com/api/v4/projects/1/repository/commits"))
+        # Five short tries, then request() keeps going until REQUEST_MAX_TIME.
+        self.assertGreaterEqual(
+            self.session.request.call_count,
+            5 + tap_gitlab.REQUEST_MAX_TIME // tap_gitlab.REQUEST_MAX_WAIT + 1)
+        self.assertGreaterEqual(self.clock.elapsed, tap_gitlab.REQUEST_MAX_TIME - 0.01)
+
     def test_truncate_body(self):
         self.assertEqual(tap_gitlab.truncate_body(b"short body"), "short body")
         long_body = "x" * (tap_gitlab.ERROR_BODY_MAX_CHARS + 10)

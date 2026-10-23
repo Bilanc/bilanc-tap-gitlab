@@ -433,8 +433,11 @@ def gen_commits_request(project_id, url):
 
             try:
                 resp = request_few_tries(url, dict(params, with_stats='true'))
-                rows = resp.json()
-            except RetriableAPIError:
+            except TRANSIENT_ERRORS:
+                # The short window only exists so a page whose stats 500 every
+                # time can fall back quickly. Connection errors are an outage:
+                # they have to reach request()'s five-minute retry, or
+                # sync_commits skips the project after ~25s.
                 LOGGER.warning(
                     "Could not fetch stats for page {} of project {} commits, "
                     "falling back to fetching them individually".format(
@@ -443,6 +446,8 @@ def gen_commits_request(project_id, url):
                 rows = resp.json()
                 for row in rows:
                     row['stats'] = fetch_commit_stats(project_id, row['id'])
+            else:
+                rows = resp.json()
 
             LOGGER.info("Received {} records".format(len(rows)))
             for row in rows:
