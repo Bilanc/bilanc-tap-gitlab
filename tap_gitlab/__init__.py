@@ -434,7 +434,7 @@ def gen_commits_request(project_id, url):
             try:
                 resp = request_few_tries(url, dict(params, with_stats='true'))
                 rows = resp.json()
-            except RetriableAPIError:
+            except TRANSIENT_ERRORS:
                 LOGGER.warning(
                     "Could not fetch stats for page {} of project {} commits, "
                     "falling back to fetching them individually".format(
