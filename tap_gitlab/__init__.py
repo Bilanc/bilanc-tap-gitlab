@@ -251,6 +251,29 @@ def truncate_body(content):
     return content
 
 
+def is_project_or_group_url(url):
+    """
+    True for the /projects/{id} and /groups/{id} detail endpoints.
+
+    A project listed in the config can be deleted between two runs; its
+    404 must skip that project rather than abort the whole sync.
+    """
+    path = url.split('?', 1)[0].rstrip('/')
+    parent = path.rsplit('/', 2)[-2] if path.count('/') >= 2 else ''
+    return parent in ('projects', 'groups')
+
+
+def project_identifiers(project):
+    """
+    Every value CONFIG['projects'] may use to name this project: its numeric
+    id and its path_with_namespace.
+    """
+    identifiers = [str(project['id'])]
+    if project.get('path_with_namespace'):
+        identifiers.append(project['path_with_namespace'])
+    return identifiers
+
+
 def request_once(url, params=None):
     params = params or {}
 
@@ -268,6 +291,9 @@ def request_once(url, params=None):
         raise ResourceInaccessible
     elif resp.status_code == 404 and '/repository/' in url:
         LOGGER.warning("Repository not found (empty repo?): {}".format(url))
+        raise ResourceInaccessible
+    elif resp.status_code == 404 and is_project_or_group_url(url):
+        LOGGER.warning("Project or group not found (deleted?), skipping: {}".format(url))
         raise ResourceInaccessible
     elif resp.status_code in RETRIABLE_STATUS_CODES:
         LOGGER.info("Received error: {} - {}".format(
@@ -890,7 +916,8 @@ def sync_group(gid, pids):
             group = transformer.transform(data, RESOURCES["groups"]["schema"], mdata)
             singer.write_record("groups", group, time_extracted=time_extracted)
 
-    return [str(project['id']) for project in data['projects']]
+    return [identifier for project in data['projects']
+            for identifier in project_identifiers(project)]
 
 def sync_pipelines(project):
     entity = "pipelines"
@@ -1070,14 +1097,13 @@ def do_sync():
         LOGGER.info("Writing Schema: {}".format(stream.tap_stream_id))
         singer.write_schema(stream.tap_stream_id, stream.schema.to_dict(), stream.key_properties)
 
-    synced_pids = []
+    synced_pids = set()
     for gid in gids:
-        projects_pids_within_group = sync_group(gid, pids)
-        synced_pids.extend(projects_pids_within_group)
-    
+        synced_pids.update(sync_group(gid, pids))
+
     LOGGER.info("Synced Groups: {}".format(gids))
-    LOGGER.info("Synced Projects: {}".format(synced_pids))
-    
+    LOGGER.info("Synced Projects: {}".format(sorted(synced_pids)))
+
     for pid in pids:
         if pid not in synced_pids:
             sync_project(pid)
