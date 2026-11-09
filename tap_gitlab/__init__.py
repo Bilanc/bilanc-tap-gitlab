@@ -661,6 +661,10 @@ def sync_merge_request_commits(project, merge_request):
             row['commit_id'] = row['id']
             row['commit_short_id'] = row['short_id']
             row['inserted_at'] = utils.strftime(utils.now())
+            # The author, committer, dates and message GitLab returns for each
+            # commit ride through as they are. The commits stream only covers
+            # the default branch, so for an open or squash-merged MR this
+            # record is the only place that metadata is kept.
             transformed_row = transformer.transform(row, RESOURCES["merge_request_commits"]["schema"], mdata)
 
             singer.write_record("merge_request_commits", transformed_row, time_extracted=utils.now())
