@@ -13,6 +13,43 @@
         "commit_short_id": {
             "type": ["null", "string"]
         },
+        "author_name": {
+            "type": ["null", "string"]
+        },
+        "author_email": {
+            "type": ["null", "string"]
+        },
+        "authored_date": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "committer_name": {
+            "type": ["null", "string"]
+        },
+        "committer_email": {
+            "type": ["null", "string"]
+        },
+        "committed_date": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                {
+                    "type": "null"
+                }
+            ]
+        },
+        "message": {
+            "type": ["null", "string"]
+        },
         "web_url": {
             "type": ["null", "string"]
         },
