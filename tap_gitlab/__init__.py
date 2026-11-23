@@ -237,7 +237,8 @@ def get_start(entity):
     return STATE[entity]
 
 
-RETRIABLE_STATUS_CODES = [429, 500, 502, 503, 504]
+# 408 is GitLab's own "Request timed out"; any 5xx is retried as well.
+RETRIABLE_STATUS_CODES = [408, 429]
 ERROR_BODY_MAX_CHARS = 300
 
 
@@ -295,7 +296,7 @@ def request_once(url, params=None):
     elif resp.status_code == 404 and is_project_or_group_url(url):
         LOGGER.warning("Project or group not found (deleted?), skipping: {}".format(url))
         raise ResourceInaccessible
-    elif resp.status_code in RETRIABLE_STATUS_CODES:
+    elif resp.status_code in RETRIABLE_STATUS_CODES or resp.status_code >= 500:
         LOGGER.info("Received error: {} - {}".format(
             resp.status_code, truncate_body(resp.content)))
         LOGGER.info("Retrying request to {}".format(url))

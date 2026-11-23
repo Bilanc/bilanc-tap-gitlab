@@ -84,6 +84,27 @@ class RequestRetryTests(unittest.TestCase):
         self.assertIs(resp, ok)
         self.assertEqual(self.session.request.call_count, 3)
 
+    def test_408_request_timed_out_is_retried_then_succeeds(self):
+        ok = make_response(200)
+        self.session.request.side_effect = [
+            make_response(408, b'{"message":{"error":"Request timed out"}}'),
+            ok,
+        ]
+        resp = tap_gitlab.request(
+            "https://gitlab.com/api/v4/projects/1/merge_requests/8/reviewers")
+        self.assertIs(resp, ok)
+        self.assertEqual(self.session.request.call_count, 2)
+
+    def test_any_5xx_is_retried_then_succeeds(self):
+        for status in (500, 501, 520, 599):
+            with self.subTest(status=status):
+                ok = make_response(200)
+                self.session.request.reset_mock()
+                self.session.request.side_effect = [make_response(status, b"oops"), ok]
+                resp = tap_gitlab.request("https://gitlab.com/api/v4/projects/1/users")
+                self.assertIs(resp, ok)
+                self.assertEqual(self.session.request.call_count, 2)
+
     def test_persistent_503_gives_up_at_max_time(self):
         self.session.request.side_effect = lambda *a, **k: make_response(503, HTML_503)
         with self.assertRaises(tap_gitlab.RetriableAPIError) as ctx:
