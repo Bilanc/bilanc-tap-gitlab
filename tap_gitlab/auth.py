@@ -13,6 +13,8 @@ NANGO_REQUEST_TIMEOUT = 30
 NANGO_MAX_TRIES = 5
 NANGO_MAX_RETRY_AFTER = 60
 NANGO_FORCE_REFRESH_RETRY_DELAY = 5
+# Nango answers 424 while it backs off after a failed refresh; waits between retries.
+NANGO_REFRESH_BACKOFF_DELAYS = (15, 30, 60)
 NANGO_EXPIRES_AT_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 # The tap refreshes this long before `expires_at`; a token taken from the
 # no-force fallback must outlive it or the tap would refresh again right away.
@@ -71,6 +73,19 @@ def fetch_nango_connection(session, connection_id, secret_key, provider_config_k
             f"Nango returned {response.status_code}: {nango_error_details(response)}"
         )
     return response
+
+
+def fetch_nango_connection_past_backoff(session, connection_id, secret_key, provider_config_key,
+                                        force_refresh):
+    """`fetch_nango_connection`, waiting out Nango's 424 refresh backoff."""
+    for delay in (*NANGO_REFRESH_BACKOFF_DELAYS, None):
+        response = fetch_nango_connection(
+            session, connection_id, secret_key, provider_config_key, force_refresh)
+        if response.status_code != 424 or delay is None:
+            return response
+        LOGGER.warning(
+            "Nango returned 424 (%s); retrying in %ss", nango_error_details(response), delay)
+        time.sleep(delay)
 
 
 def parse_nango_expires_at(expires_at_str):
@@ -156,24 +171,36 @@ class GitlabAuth:
 
             provider_key: str = "gitlab-pat" if self.__self_hosted else "gitlab"
 
-            # A 400 on the forced refresh (GitLab rejected that one refresh) is
-            # retried once without force_refresh; the token Nango still holds
-            # is used if it outlives NANGO_EXPIRY_MARGIN.
+            # GitLab refresh tokens are single-use, so a refresh is forced only
+            # when the token Nango holds is inside NANGO_EXPIRY_MARGIN or Nango's
+            # own refresh failed (400/424). A 400 on the forced refresh (GitLab
+            # rejected that one refresh) is retried without force_refresh.
+            def fetch(force_refresh):
+                return fetch_nango_connection_past_backoff(
+                    self.__session, self.__nango_connection_id, self.__nango_secret_key,
+                    provider_key, force_refresh)
+
             response = fetch_nango_connection(
                 self.__session, self.__nango_connection_id, self.__nango_secret_key,
-                provider_key, force_refresh=True)
+                provider_key, force_refresh=False)
+
+            if response.ok:
+                needs_refresh = not _outlives_margin(
+                    response.json().get("credentials", {}).get("expires_at"))
+            else:
+                needs_refresh = response.status_code in (400, 424)
 
             forced_refresh_error = None
-            if response.status_code == 400:
-                forced_refresh_error = nango_error_details(response)
-                LOGGER.warning(
-                    "Nango force_refresh failed (%s); retrying without force_refresh",
-                    forced_refresh_error,
-                )
-                time.sleep(NANGO_FORCE_REFRESH_RETRY_DELAY)
-                response = fetch_nango_connection(
-                    self.__session, self.__nango_connection_id, self.__nango_secret_key,
-                    provider_key, force_refresh=False)
+            if needs_refresh and not self.__self_hosted:
+                response = fetch(force_refresh=True)
+                if response.status_code == 400:
+                    forced_refresh_error = nango_error_details(response)
+                    LOGGER.warning(
+                        "Nango force_refresh failed (%s); retrying without force_refresh",
+                        forced_refresh_error,
+                    )
+                    time.sleep(NANGO_FORCE_REFRESH_RETRY_DELAY)
+                    response = fetch(force_refresh=False)
 
             if not response.ok:
                 raise NangoRefreshError(
