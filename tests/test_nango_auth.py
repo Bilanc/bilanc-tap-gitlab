@@ -122,24 +122,39 @@ class NangoAuthTests(unittest.TestCase):
         with self.assertRaises(auth.NangoRefreshError) as ctx:
             self.make_auth().get_auth_token()
 
-        # initial lookup, then the forced refresh with every backoff delay
-        self.assertEqual(
-            self.session.get.call_count, len(auth.NANGO_REFRESH_BACKOFF_DELAYS) + 2)
+        # lookup waits out the backoff without force_refresh, then the forced
+        # refresh waits through it as well
+        attempts = len(auth.NANGO_REFRESH_BACKOFF_DELAYS) + 1
+        urls = self.urls()
+        self.assertEqual(len(urls), attempts * 2)
+        self.assertTrue(all("force_refresh" not in url for url in urls[:attempts]))
+        self.assertTrue(all("force_refresh=true" in url for url in urls[attempts:]))
         self.assertIn("424", str(ctx.exception))
         self.assertIn("A recent refresh attempt failed", str(ctx.exception))
 
     def test_failed_automatic_refresh_is_force_refreshed(self):
-        for failed in (refresh_error(), refresh_backoff()):
-            self.session.get.reset_mock()
-            self.session.get.side_effect = [failed, ok_response()]
+        self.session.get.side_effect = [refresh_error(), ok_response()]
 
-            self.assertEqual(self.make_auth().get_auth_token(), "new-token")
+        self.assertEqual(self.make_auth().get_auth_token(), "new-token")
 
-            urls = self.urls()
-            self.assertEqual(len(urls), 2)
-            self.assertNotIn("force_refresh", urls[0])
-            self.assertIn("force_refresh=true", urls[1])
-            self.sleep.assert_not_called()
+        urls = self.urls()
+        self.assertEqual(len(urls), 2)
+        self.assertNotIn("force_refresh", urls[0])
+        self.assertIn("force_refresh=true", urls[1])
+        self.sleep.assert_not_called()
+
+    def test_initial_424_waits_out_backoff_without_force_refresh(self):
+        self.session.get.side_effect = [
+            refresh_backoff(), refresh_backoff(), ok_response(token="held-token"),
+        ]
+
+        self.assertEqual(self.make_auth().get_auth_token(), "held-token")
+
+        urls = self.urls()
+        self.assertEqual(len(urls), 3)
+        self.assertTrue(all("force_refresh" not in url for url in urls))
+        self.sleep.assert_any_call(auth.NANGO_REFRESH_BACKOFF_DELAYS[0])
+        self.sleep.assert_any_call(auth.NANGO_REFRESH_BACKOFF_DELAYS[1])
 
     def test_self_hosted_uses_pat_integration(self):
         self.session.get.return_value = response(200, {"credentials": {"apiKey": "glpat-x"}})

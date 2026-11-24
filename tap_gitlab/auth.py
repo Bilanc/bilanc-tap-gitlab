@@ -173,16 +173,17 @@ class GitlabAuth:
 
             # GitLab refresh tokens are single-use, so a refresh is forced only
             # when the token Nango holds is inside NANGO_EXPIRY_MARGIN or Nango's
-            # own refresh failed (400/424). A 400 on the forced refresh (GitLab
+            # own refresh failed (400/424). The opening lookup goes through
+            # `fetch`, so a 424 waits out NANGO_REFRESH_BACKOFF_DELAYS before
+            # that decision; credentials that then outlive the margin are used
+            # without force_refresh. A 400 on the forced refresh (GitLab
             # rejected that one refresh) is retried without force_refresh.
             def fetch(force_refresh):
                 return fetch_nango_connection_past_backoff(
                     self.__session, self.__nango_connection_id, self.__nango_secret_key,
                     provider_key, force_refresh)
 
-            response = fetch_nango_connection(
-                self.__session, self.__nango_connection_id, self.__nango_secret_key,
-                provider_key, force_refresh=False)
+            response = fetch(force_refresh=False)
 
             if response.ok:
                 needs_refresh = not _outlives_margin(
