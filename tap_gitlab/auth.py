@@ -172,19 +172,26 @@ class GitlabAuth:
             provider_key: str = "gitlab-pat" if self.__self_hosted else "gitlab"
 
             # GitLab refresh tokens are single-use, so a refresh is forced only
-            # when the token Nango holds is inside NANGO_EXPIRY_MARGIN. A 400 on
-            # the forced refresh (GitLab rejected that one refresh) is retried
-            # without force_refresh.
+            # when the token Nango holds is inside NANGO_EXPIRY_MARGIN or Nango's
+            # own refresh failed (400/424). A 400 on the forced refresh (GitLab
+            # rejected that one refresh) is retried without force_refresh.
             def fetch(force_refresh):
                 return fetch_nango_connection_past_backoff(
                     self.__session, self.__nango_connection_id, self.__nango_secret_key,
                     provider_key, force_refresh)
 
-            response = fetch(force_refresh=False)
+            response = fetch_nango_connection(
+                self.__session, self.__nango_connection_id, self.__nango_secret_key,
+                provider_key, force_refresh=False)
+
+            if response.ok:
+                needs_refresh = not _outlives_margin(
+                    response.json().get("credentials", {}).get("expires_at"))
+            else:
+                needs_refresh = response.status_code in (400, 424)
 
             forced_refresh_error = None
-            if response.ok and not self.__self_hosted and not _outlives_margin(
-                    response.json().get("credentials", {}).get("expires_at")):
+            if needs_refresh and not self.__self_hosted:
                 response = fetch(force_refresh=True)
                 if response.status_code == 400:
                     forced_refresh_error = nango_error_details(response)
