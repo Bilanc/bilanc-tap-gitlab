@@ -46,6 +46,16 @@ def refresh_error(code="invalid_credentials",
     return response(400, {"error": {"code": code, "message": message}})
 
 
+def near_expiry():
+    return ok_response(token="old-token", expires_at=expires_in(minutes=5))
+
+
+def refresh_backoff():
+    return response(424, {"error": {
+        "code": "invalid_credentials",
+        "message": "A recent refresh attempt failed. Backing off before retrying."}})
+
+
 class NangoAuthTests(unittest.TestCase):
     def setUp(self):
         # also makes backoff instantaneous (same time.sleep)
@@ -71,7 +81,7 @@ class NangoAuthTests(unittest.TestCase):
     def urls(self):
         return [call.args[0] for call in self.session.get.call_args_list]
 
-    def test_success_uses_force_refresh_and_caches_token(self):
+    def test_fresh_token_is_used_without_force_refresh(self):
         self.session.get.return_value = ok_response()
         gitlab_auth = self.make_auth()
 
@@ -79,9 +89,43 @@ class NangoAuthTests(unittest.TestCase):
         self.assertEqual(gitlab_auth.get_auth_token(), "new-token")
 
         self.assertEqual(self.session.get.call_count, 1)
-        self.assertIn("provider_config_key=gitlab&force_refresh=true", self.urls()[0])
+        self.assertIn("provider_config_key=gitlab", self.urls()[0])
+        self.assertNotIn("force_refresh", self.urls()[0])
         self.assertEqual(self.session.get.call_args.kwargs["timeout"], auth.NANGO_REQUEST_TIMEOUT)
         self.sleep.assert_not_called()
+
+    def test_token_inside_margin_is_force_refreshed(self):
+        self.session.get.side_effect = [near_expiry(), ok_response()]
+
+        self.assertEqual(self.make_auth().get_auth_token(), "new-token")
+
+        urls = self.urls()
+        self.assertEqual(len(urls), 2)
+        self.assertNotIn("force_refresh", urls[0])
+        self.assertIn("force_refresh=true", urls[1])
+
+    def test_424_refresh_backoff_is_retried_then_succeeds(self):
+        self.session.get.side_effect = [
+            near_expiry(), refresh_error(), refresh_backoff(), refresh_backoff(),
+            ok_response(token="held-token"),
+        ]
+
+        self.assertEqual(self.make_auth().get_auth_token(), "held-token")
+
+        self.assertEqual(self.session.get.call_count, 5)
+        self.sleep.assert_any_call(auth.NANGO_REFRESH_BACKOFF_DELAYS[0])
+        self.sleep.assert_any_call(auth.NANGO_REFRESH_BACKOFF_DELAYS[1])
+
+    def test_424_refresh_backoff_gives_up_after_all_delays(self):
+        self.session.get.return_value = refresh_backoff()
+
+        with self.assertRaises(auth.NangoRefreshError) as ctx:
+            self.make_auth().get_auth_token()
+
+        self.assertEqual(
+            self.session.get.call_count, len(auth.NANGO_REFRESH_BACKOFF_DELAYS) + 1)
+        self.assertIn("424", str(ctx.exception))
+        self.assertIn("A recent refresh attempt failed", str(ctx.exception))
 
     def test_self_hosted_uses_pat_integration(self):
         self.session.get.return_value = response(200, {"credentials": {"apiKey": "glpat-x"}})
@@ -93,18 +137,20 @@ class NangoAuthTests(unittest.TestCase):
         self.assertIn("provider_config_key=gitlab-pat", self.urls()[0])
 
     def test_400_on_force_refresh_retries_once_without_force_refresh(self):
-        self.session.get.side_effect = [refresh_error(), ok_response(token="held-token")]
+        self.session.get.side_effect = [
+            near_expiry(), refresh_error(), ok_response(token="held-token")]
 
         self.assertEqual(self.make_auth().get_auth_token(), "held-token")
 
         urls = self.urls()
-        self.assertEqual(len(urls), 2)
-        self.assertIn("force_refresh=true", urls[0])
-        self.assertNotIn("force_refresh", urls[1])
+        self.assertEqual(len(urls), 3)
+        self.assertIn("force_refresh=true", urls[1])
+        self.assertNotIn("force_refresh", urls[2])
         self.sleep.assert_called_once_with(auth.NANGO_FORCE_REFRESH_RETRY_DELAY)
 
     def test_400_fallback_token_expiring_within_margin_is_rejected(self):
         self.session.get.side_effect = [
+            near_expiry(),
             refresh_error(),
             ok_response(token="held-token", expires_at=expires_in(minutes=10)),
         ]
@@ -112,13 +158,14 @@ class NangoAuthTests(unittest.TestCase):
         with self.assertRaises(auth.NangoRefreshError) as ctx:
             self.make_auth().get_auth_token()
 
-        self.assertEqual(self.session.get.call_count, 2)
+        self.assertEqual(self.session.get.call_count, 3)
         self.assertIn("invalid_credentials: The external API returned an error", str(ctx.exception))
         self.assertIn("too soon to use", str(ctx.exception))
         self.assertIn("400", str(ctx.exception))
 
     def test_400_twice_raises_error_details_without_connection_payload(self):
         self.session.get.side_effect = [
+            near_expiry(),
             refresh_error(),
             response(400, {
                 "error": {"code": "invalid_credentials", "message": "token revoked"},
@@ -130,7 +177,7 @@ class NangoAuthTests(unittest.TestCase):
             self.make_auth().get_auth_token()
 
         message = str(ctx.exception)
-        self.assertEqual(self.session.get.call_count, 2)
+        self.assertEqual(self.session.get.call_count, 3)
         self.assertIn("invalid_credentials: token revoked", message)
         self.assertIn("conn-1", message)
         self.assertNotIn("someone@example.com", message)
@@ -156,7 +203,7 @@ class NangoAuthTests(unittest.TestCase):
 
         self.assertEqual(self.make_auth().get_auth_token(), "new-token")
         self.assertEqual(self.session.get.call_count, 3)
-        self.assertTrue(all("force_refresh=true" in url for url in self.urls()))
+        self.assertTrue(all("force_refresh" not in url for url in self.urls()))
 
     def test_5xx_gives_up_after_max_tries(self):
         self.session.get.return_value = response(503, reason="Service Temporarily Unavailable")
@@ -211,7 +258,8 @@ class NangoAuthTests(unittest.TestCase):
     def test_stale_token_is_refreshed_on_next_request(self):
         self.session.get.side_effect = [
             ok_response(token="first", expires_at=expires_in(minutes=25)),
-            ok_response(token="second"),
+            ok_response(token="first", expires_at=expires_in(minutes=19)),
+            ok_response(token="second", expires_at=expires_in(hours=3)),
         ]
         gitlab_auth = self.make_auth()
 
@@ -221,7 +269,8 @@ class NangoAuthTests(unittest.TestCase):
             dt.strptime = datetime.strptime
             dt.max = datetime.max
             self.assertEqual(gitlab_auth.get_auth_token(), "second")
-        self.assertEqual(self.session.get.call_count, 2)
+        self.assertEqual(self.session.get.call_count, 3)
+        self.assertIn("force_refresh=true", self.urls()[2])
 
 
 
